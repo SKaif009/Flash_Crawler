@@ -1,6 +1,6 @@
 # ⚡ FlashCrawler – Colorful BFS Web Crawler
 
-FlashCrawler is a fast, terminal-friendly Python web crawler that uses **Breadth-First Search (BFS)** to discover URLs. Designed for security researchers, SEO analysts, and developers, it features colorful terminal output, domain filtering, deduplication by query patterns, and easy extensibility.
+FlashCrawler is a fast, terminal-friendly Python web crawler that uses **Breadth-First Search (BFS)** to discover URLs. Designed for security researchers, VAPT, and developers, it features colorful terminal output, domain filtering, deduplication by query patterns, and easy extensibility.
 
 ![Python](https://img.shields.io/badge/Python-3.8+-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
