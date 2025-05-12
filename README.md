@@ -28,6 +28,22 @@ FlashCrawler is a fast, terminal-friendly Python web crawler that uses **Breadth
 
 ---
 
+## ✨ Installation
+
+```bash
+git clone https://github.com/SKaif009/Flash_Crawler.git
+```
+```bash
+cd Flash_Crawler
+```
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+
+---
+
 ## 🚀 Usage
 
 ### 🔧 Command-line Options
@@ -82,9 +98,7 @@ python FlashCrawler.py -u https://example.com -s --dedup-params
 * Python 3.8+
 * Install dependencies:
 
-```bash
-pip install -r requirements.txt
-```
+
 
 **`requirements.txt`:**
 
