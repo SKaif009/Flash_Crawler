@@ -13,6 +13,11 @@ FlashCrawler is a fast, terminal-friendly Python web crawler that uses **Breadth
 
 ---
 
+![image](https://github.com/user-attachments/assets/5ab03ea0-abc5-4e98-abfa-702a0716e091)
+
+
+---
+
 ## ✨ Features
 
 * 🔍 **BFS crawling** for broad and shallow discovery
