@@ -74,7 +74,7 @@ python FlashCrawler.py -u https://example.com -s
 python FlashCrawler.py -u https://example.com --dedup-params
 
 # Combine save and dedup
-python FlashCrawler.py -u https://example.com -s --dedup-params
+python FlashCrawler.py -u https://example.com -s --dedup-params --rua
 ```
 
 ---
