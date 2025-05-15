@@ -1,103 +1,76 @@
 #!/usr/bin/env python3
+
 """
-FlashCrawler – Colorful BFS Web Crawler with parameter pattern deduplication
+FlashCrawler v2.0 – JS-Aware Web Crawler using Playwright with Option Random User-Agent
 """
+
 import os
+import re
 import time
+import asyncio
+import random
 import argparse
 from pathlib import Path
-from collections import deque
 from urllib.parse import urljoin, urlparse, parse_qs
 
-import requests
 from bs4 import BeautifulSoup
 from rich import box
 from rich.console import Console
 from rich.table import Table
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
-# ────────────── Configuration ────────────── #
+from playwright.async_api import async_playwright
+
+# ────────────── CLI Configuration ────────────── #
 console = Console()
 parser = argparse.ArgumentParser(
-    description="""
-⚡ FlashCrawler – Colorful BFS Web Crawler
-Crawl websites using a breadth-first search approach and discover all reachable URLs.
-""",
+    description="⚡ FlashCrawler – BFS Web Crawler v2.0.0",
     epilog="""
 Examples:
-
   python FlashCrawler.py -u https://example.com
-  python FlashCrawler.py -l urls.txt -d 60 -s
   python FlashCrawler.py -u https://example.com --save -t 3
-
-GitHub: https://github.com/SKaif009,  Author : BlackForgeX
+GitHub: https://github.com/SKaif009, Author: BlackForgeX
 """,
     formatter_class=argparse.RawTextHelpFormatter
 )
 
-parser.add_argument("-u", "--url", help="Single target URL to crawl")
-parser.add_argument("-l", "--list", help="File containing list of URLs to crawl")
-parser.add_argument("-d", "--depth", type=int, default=50, help="Max number of pages to crawl (default: 50)")
-parser.add_argument("-t", "--time", type=int, default=0, help="Delay between requests in seconds (default: 0)")
-parser.add_argument("-s", "--save", action="store_true", help="Save found URLs to 'results/' folder")
-parser.add_argument("--req-timeout", type=int, default=10, help="Request timeout in seconds (default: 10)")
-parser.add_argument("--dedup-params", action="store_true", help="Only crawl one URL per query pattern signature")
+parser.add_argument("-u", "--url", help="Target URL to crawl", required=True)
+parser.add_argument("-d", "--depth", type=int, default=100, help="Max number of pages to crawl")
+parser.add_argument("-t", "--time", type=int, default=1, help="Delay between requests in seconds")
+parser.add_argument("-s", "--save", action="store_true", help="Save results to 'results/'")
+parser.add_argument("--req-timeout", type=int, default=15, help="Request timeout in seconds")
+parser.add_argument("--dedup-params", action="store_true", help="Deduplicate based on parameter signature")
+parser.add_argument("-rua", "--random-agent", action="store_true", help="Use a random User-Agent from user_agents.txt")
 args = parser.parse_args()
 
-HEADERS = {"User-Agent": "FlashCrawler/1.0 (+https://github.com/you)"}
-TIMEOUT = args.req_timeout
-MAX_PAGES = args.depth
+TIMEOUT = args.req_timeout * 1000
 DELAY = args.time
+MAX_PAGES = args.depth
 SAVE_RESULTS = args.save
 DEDUP_PARAM_SIG = args.dedup_params
 
+visited = set()
+queue = set([args.url])
+found = set()
+allowed_domain = urlparse(args.url).netloc
+seen_param_signatures = set()
 results_dir = Path("results")
 results_dir.mkdir(exist_ok=True)
 
-visited = set()
-queue = deque()
-found = set()
-allowed_domains = set()
-seen_param_signatures = set()
+def get_random_user_agent():
+    try:
+        with open("user_agents.txt", "r") as f:
+            agents = [line.strip() for line in f if line.strip()]
+            return random.choice(agents)
+    except FileNotFoundError:
+        console.print("[red]✖ user_agents.txt not found. Using default User-Agent.[/]")
+        return None
 
-# ────────────── Setup URLs ────────────── #
-def load_urls():
-    urls = set()
-    if args.url:
-        urls.add(args.url)
-    if args.list:
-        try:
-            with open(args.list, "r") as f:
-                urls.update(line.strip() for line in f if line.strip())
-        except FileNotFoundError:
-            console.print(f"[red]✖ File not found:[/] {args.list}")
-            exit(1)
-    if not urls:
-        console.print("[red]✖ Provide at least one URL with -u or -l[/]")
-        exit(1)
-    for u in urls:
-        allowed_domains.add(urlparse(u).netloc)
-    queue.extend(urls)
-
-# ────────────── Helpers ────────────── #
-def banner():
-    os.system('cls' if os.name == 'nt' else 'clear')
-    ascii_art = r"""FLASH CRAWLER""".strip("\n")
-    console.print(f"[bold yellow] ⚡ [/]" +
-                  f"[bold bright_magenta]{ascii_art}[/]" +
-                  f"[bold yellow] ⚡ [/]", justify="center")
-    console.rule("[bold yellow] ⚡ [bold cyan] FlashCrawler – BFS Web Crawler [bold yellow] ⚡", style="bright_magenta")
-    console.print("[bold green]Author:[/] BlackForgeX", justify="center")
-    console.print("[bold green]GitHub:[/] https://github.com/SKaif009", justify="center")
-    console.print()
-    console.print(f"[bold cyan]⚙ Max Pages:[/] {MAX_PAGES}    [bold cyan]⏱ Delay:[/] {DELAY}s    [bold cyan]⏰ Timeout:[/] {TIMEOUT}s")
-    for url in queue:
-        console.print(f"[bold cyan]🌐 Seed:[/] {url}")
-    console.print()
+RANDOM_UA = get_random_user_agent() if args.random_agent else None
 
 def is_valid(url: str) -> bool:
     p = urlparse(url)
-    return p.scheme in {"http", "https"} and p.netloc in allowed_domains
+    return p.scheme in {"http", "https"} and p.netloc == allowed_domain
 
 def normalize_param_signature(url: str) -> str:
     parsed = urlparse(url)
@@ -106,72 +79,90 @@ def normalize_param_signature(url: str) -> str:
         return f"{parsed.path}?params={'&'.join(keys)}"
     return parsed.path
 
-def extract(url: str) -> set[str]:
-    try:
-        r = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
-        r.raise_for_status()
-    except requests.exceptions.Timeout:
-        console.log(f"[yellow]⚠ Timeout:[/] {url}")
-        return set()
-    except requests.exceptions.RequestException as e:
-        console.log(f"[red]✖ Request failed:[/] {url} – {e}")
-        return set()
-
-    try:
-        soup = BeautifulSoup(r.text, "html.parser")
-    except Exception as e:
-        console.log(f"[red]✖ HTML parse error:[/] {url} – {e}")
-        return set()
-
-    base = r.url
+def extract_links(soup, base_url):
+    tags = soup.find_all(["a", "form", "script", "iframe"])
     links = set()
-    for tag in soup.find_all("a", href=True):
-        abs_url = urljoin(base, tag["href"])
-        if is_valid(abs_url):
-            if DEDUP_PARAM_SIG:
-                sig = normalize_param_signature(abs_url)
-                if sig in seen_param_signatures:
-                    continue
-                seen_param_signatures.add(sig)
-            links.add(abs_url)
+    for tag in tags:
+        href = tag.get("href") or tag.get("action") or tag.get("src")
+        if href:
+            abs_url = urljoin(base_url, href)
+            if is_valid(abs_url):
+                if DEDUP_PARAM_SIG:
+                    sig = normalize_param_signature(abs_url)
+                    if sig in seen_param_signatures:
+                        continue
+                    seen_param_signatures.add(sig)
+                links.add(abs_url)
     return links
 
-# ────────────── Crawl Logic ────────────── #
-def crawl():
+def extract_endpoints_from_js(text):
+    return set(re.findall(r'["\'](/[^"\\>\s]+)["\']', text))
+
+async def extract(page, url):
+    links = set()
+    try:
+        if RANDOM_UA:
+            await page.set_extra_http_headers({"User-Agent": RANDOM_UA})
+        await page.set_viewport_size({"width": 1366, "height": 768})
+        await page.goto(url, wait_until="load", timeout=TIMEOUT)
+        await asyncio.sleep(DELAY)
+        html = await page.content()
+        soup = BeautifulSoup(html, "html.parser")
+        links |= extract_links(soup, page.url)
+        for script in soup.find_all("script"):
+            if script.string:
+                for ep in extract_endpoints_from_js(script.string):
+                    abs_url = urljoin(page.url, ep)
+                    if is_valid(abs_url):
+                        links.add(abs_url)
+    except Exception as e:
+        console.log(f"[red]✖ Error on:[/] {url} – {e}")
+    return links
+
+async def crawl():
     banner()
     start = time.perf_counter()
+    total = 0
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[blue]{task.completed}/{task.total} pages"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True,
-    ) as prog:
-        task = prog.add_task("Crawling", total=MAX_PAGES)
-        while queue and len(visited) < MAX_PAGES:
-            url = queue.popleft()
-            if url in visited:
-                continue
-            visited.add(url)
-
-            prog.update(task, advance=1, description=f"[green]Visiting[/] {urlparse(url).netloc}")
-            links = extract(url)
-            time.sleep(DELAY)
-            for link in links:
-                if link not in visited and link not in queue:
-                    queue.append(link)
-            found.update(links)
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        with Progress(
+            SpinnerColumn(), TextColumn("[progress.description]{task.description}"),
+            BarColumn(), TextColumn("[blue]{task.completed}/{task.total} pages"),
+            TimeElapsedColumn(), console=console, transient=True,
+        ) as prog:
+            task = prog.add_task("Crawling", total=MAX_PAGES)
+            while queue and total < MAX_PAGES:
+                url = queue.pop()
+                if url in visited:
+                    continue
+                visited.add(url)
+                prog.update(task, advance=1, description=f"[green]Visiting[/] {urlparse(url).path or '/'}")
+                links = await extract(page, url)
+                found.update(links)
+                for link in links:
+                    if link not in visited and link not in queue:
+                        queue.add(link)
+                total += 1
+        await browser.close()
 
     elapsed = time.perf_counter() - start
     console.print(f"\n[bold green]✔ Finished in {elapsed:.2f}s[/]")
     show_table()
     if SAVE_RESULTS:
         save_results()
+def banner():
+    os.system('cls' if os.name == 'nt' else 'clear')
+    console.print("[bold yellow] ⚡ [/] [bold bright_magenta] Flash Crawler v2.0 [/] [bold yellow] ⚡ [/]", justify="center")
+    console.rule("[bold yellow] ⚡ [bold cyan] FlashCrawler – BFS Web Crawler [bold yellow] ⚡", style="bright_magenta")
+    console.print(f"[bold cyan]🌐 Seed:[/] {args.url}    [bold cyan]⏱ Delay:[/] {DELAY}s    [bold cyan]⏰ Timeout:[/] {TIMEOUT/1000:.1f}s")
+    if RANDOM_UA:
+        console.print(f"[bold cyan]🕵 Random UA:[/] {RANDOM_UA[:60]}...\\n")
+    else:
+        console.print("[yellow]Tip:[/] Use [bold]--random-agent[/] to simulate real browser headers when a site blocks Playwright.\\n")
 
-# ────────────── Output Results ────────────── #
+
 def show_table():
     table = Table(title="Discovered URLs", box=box.SIMPLE_HEAVY)
     table.add_column("#", style="cyan", width=4)
@@ -179,7 +170,7 @@ def show_table():
     for i, url in enumerate(sorted(visited.union(found)), 1):
         table.add_row(str(i), url)
     console.print(table)
-    console.rule("[bold yellow]⚡[bold cyan] FlashCrawler[/]", style="bright_magenta")
+    console.rule("[bold yellow]⚡[bold cyan] FlashCrawler", style="bright_magenta")
 
 def save_results():
     all_urls = visited.union(found)
@@ -202,7 +193,5 @@ def save_results():
     if DEDUP_PARAM_SIG:
         console.print(f"[cyan]Unique param patterns:[/] {len(seen_param_signatures)}")
 
-# ────────────── Entry Point ────────────── #
 if __name__ == "__main__":
-    load_urls()
-    crawl()
+    asyncio.run(crawl())
